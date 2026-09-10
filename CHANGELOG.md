@@ -2,26 +2,32 @@
 
 This log starts from the rollback baseline requested on 2026-09-09. Entries are intentionally numbered so later changes can be reversed one at a time.
 
+## KV-026 — Public setup is clone, install, run
+
+- SETUP.md is only clone, `npm install`, and `npm run dev`.
+- Removed local folder paths from this changelog. Stopped tracking launcher `.rtf` files.
+- Revert: restore the previous SETUP copy and changelog path mentions.
+
 ## KV-025 — Drop work GitHub wording from SETUP
 
-- Removed the SETUP line about GitHub Enterprise at Spotify, and the “work GitHub” aside, so the public docs do not disclose a workplace affiliation.
+- Removed extra GitHub-account instructions from SETUP so the public docs stay to running the app.
 - Revert: restore that paragraph in `SETUP.md`.
 
 ## KV-024 — Public docs: localhost is not a hosted app
 
 - README and SETUP now say `127.0.0.1:5173` is the local Vite URL after `npm run dev`, not a public site.
-- Clone instructions use the GitHub repo instead of the `~/Kinven Local` folder path.
+- Clone instructions use the GitHub repo instead of a local machine folder path.
 - Revert: restore the previous README/SETUP copy.
 
 ## KV-023 — Setup brief for running and publishing Kinven
 
-- Added `SETUP.md` covering local run, Cursor GitHub as ashorman, and creating the GitHub remote.
+- Added `SETUP.md` covering local run and the GitHub remote.
 - README now points at that brief.
 - Revert: delete `SETUP.md` and the README pointer.
 
 ## KV-022 — Kinven workspace and branding cleanup
 
-- Pointed the Cursor workspace at `~/Kinven Local`, renamed the chat title to Kinven, and replaced the generic Vite README with Kinven-specific docs.
+- Pointed the Cursor workspace at the Kinven project folder, renamed the chat title to Kinven, and replaced the generic Vite README with Kinven-specific docs.
 - Added a Kinven wordmark in the titlebar and explicit migration from legacy `aftertone-local-v1` / `aftertone-theme` storage keys.
 - Renamed changelog ticket prefixes from `AT-` to `KV-`.
 - Regression: the identity suite verifies the titlebar brand and legacy storage migration.
