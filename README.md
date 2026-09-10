@@ -1,22 +1,21 @@
-# Kinven Local
+# Kinven
 
-A local-first task and calendar app inspired by keyboard-first planning tools. Tasks, groups, recurring schedules, and calendar blocks are stored in your browser via `localStorage`.
+A local-first task and calendar app. Tasks, groups, and calendar blocks live in your browser via `localStorage`. This GitHub repo is the source code only — there is no hosted Kinven website.
 
-**First-time setup, including connecting GitHub as ashorman:** see [SETUP.md](SETUP.md).
+**Setup:** see [SETUP.md](SETUP.md).
 
-## Run locally
+## Run it on your computer
 
 ```bash
-cd ~/Kinven\ Local
 npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in your browser.
+Vite prints a local address, usually `http://127.0.0.1:5173`. Open that in a browser **on the same computer**. `127.0.0.1` means localhost: it is not public, and clicking it from GitHub will not load the app for anyone else.
 
 ## Scripts
 
-- `npm run dev` — start the Vite dev server
+- `npm run dev` — start the local app
 - `npm run build` — production build
 - `npm run preview` — preview the production build
 - `npm test` — run the regression suite
@@ -24,7 +23,7 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in your browser.
 
 ## Data storage
 
-Kinven stores app data under `kinven-local-v1` and theme preference under `kinven-theme`. If you used the earlier local build, existing tasks and theme settings are migrated automatically from the legacy `aftertone-local-v1` and `aftertone-theme` keys.
+Kinven stores app data under `kinven-local-v1` and theme preference under `kinven-theme`. Older local builds migrate automatically from `aftertone-local-v1` and `aftertone-theme`.
 
 ## Change log
 
