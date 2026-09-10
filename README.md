@@ -1,32 +1,31 @@
-# React + TypeScript + Vite
+# Kinven Local
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A local-first task and calendar app inspired by keyboard-first planning tools. Tasks, groups, recurring schedules, and calendar blocks are stored in your browser via `localStorage`.
 
-Currently, two official plugins are available:
+**First-time setup, including connecting GitHub as ashorman:** see [SETUP.md](SETUP.md).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Run locally
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd ~/Kinven\ Local
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173) in your browser.
+
+## Scripts
+
+- `npm run dev` — start the Vite dev server
+- `npm run build` — production build
+- `npm run preview` — preview the production build
+- `npm test` — run the regression suite
+- `npm run lint` — run Oxlint
+
+## Data storage
+
+Kinven stores app data under `kinven-local-v1` and theme preference under `kinven-theme`. If you used the earlier local build, existing tasks and theme settings are migrated automatically from the legacy `aftertone-local-v1` and `aftertone-theme` keys.
+
+## Change log
+
+See `CHANGELOG.md` for numbered, reversible local changes.
