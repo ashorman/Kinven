@@ -25,7 +25,7 @@ Data stays in this browser under `kinven-local-v1`. Nothing is sent to a server.
 
 ## 2. Connect your personal GitHub in Cursor
 
-Use this when you want Cursor to talk to **github.com/ashorman**, not a work GitHub.
+Use this when you want Cursor to talk to **github.com/ashorman**.
 
 1. Open Cursor Settings → Integrations.
 2. Next to Source Control, choose **Add Provider → GitHub**.
@@ -43,7 +43,5 @@ git add -A
 git commit -m "Your message"
 git push
 ```
-
-GitHub Enterprise at Spotify is a different account. Do not push Kinven there.
 
 If `git push` asks for a password, GitHub will reject it. Use `gh auth login --hostname github.com --web` or a personal access token as the password, signed in as **ashorman**.

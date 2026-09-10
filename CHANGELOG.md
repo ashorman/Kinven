@@ -2,6 +2,11 @@
 
 This log starts from the rollback baseline requested on 2026-09-09. Entries are intentionally numbered so later changes can be reversed one at a time.
 
+## KV-025 — Drop work GitHub wording from SETUP
+
+- Removed the SETUP line about GitHub Enterprise at Spotify, and the “work GitHub” aside, so the public docs do not disclose a workplace affiliation.
+- Revert: restore that paragraph in `SETUP.md`.
+
 ## KV-024 — Public docs: localhost is not a hosted app
 
 - README and SETUP now say `127.0.0.1:5173` is the local Vite URL after `npm run dev`, not a public site.
