@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Coverage
+coverage
+*.lcov
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
