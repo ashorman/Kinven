@@ -2,6 +2,8 @@
 
 Kinven is a local-first app. Tasks and calendar data stay in the browser (`localStorage`). This repository is source code only — do not commit personal task data, API keys, tokens, or `.env` files.
 
+Production deployments should serve Kinven with the headers configured in `vite.config.ts`, `public/_headers`, or `vercel.json`. Hosts that do not consume those files need equivalent CSP, `frame-ancestors`, `nosniff`, permissions policy, referrer policy, and COOP settings at the platform, CDN, or proxy layer.
+
 ## Reporting a vulnerability
 
 Please **do not** open a public GitHub issue for security reports.

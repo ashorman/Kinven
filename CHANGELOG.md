@@ -2,6 +2,14 @@
 
 This log starts from the rollback baseline requested on 2026-09-09. Entries are intentionally numbered so later changes can be reversed one at a time.
 
+## KV-027 — Storage migration and deployment header hardening
+
+- Restricted storage migration to the current Kinven keys and explicit `aftertone-*` legacy keys, with schema validation before persisted tasks or groups are used.
+- Persisted local data now carries a Kinven app/version marker, and unrelated same-origin task-shaped data or theme values are ignored.
+- Added static deployment header config for Netlify-style hosts and Vercel, plus deployment guidance for hosts that need platform-level header setup.
+- Regression: the identity suite verifies unrelated storage keys are not imported.
+- Revert: restore broad `localStorage` key scanning, remove `public/_headers` and `vercel.json`, and delete the deployment-header docs.
+
 ## KV-026 — Public setup is clone, install, run
 
 - SETUP.md is only clone, `npm install`, and `npm run dev`.

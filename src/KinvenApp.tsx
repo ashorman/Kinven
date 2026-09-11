@@ -34,6 +34,8 @@ const STORE = 'kinven-local-v1'
 const THEME_STORE = 'kinven-theme'
 const LEGACY_STORE = 'aftertone-local-v1'
 const LEGACY_THEME = 'aftertone-theme'
+const STORE_APP = 'kinven'
+const STORE_VERSION = 1
 const DAY_MINUTES = 1440
 const GRID_HEIGHT = 1440
 const minutesToOffset = (minutes: number) => (minutes / DAY_MINUTES) * 100
@@ -60,6 +62,75 @@ const seedTasks: Task[] = [
   { id: uid(), title: 'Reply to messages', notes: '', groupId: 'admin', date: null, startMinutes: 540, duration: 30, completed: false, repeat: 'none', createdAt: Date.now() },
   { id: uid(), title: 'Outline next milestone', notes: '', groupId: 'deep', date: null, startMinutes: 540, duration: 60, completed: false, repeat: 'none', createdAt: Date.now() },
 ]
+
+type StoredData = {
+  app?: string
+  version?: number
+  tasks: Task[]
+  groups: Group[]
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+const isRepeatRule = (value: unknown): value is RepeatRule =>
+  value === 'none' || value === 'daily' || value === 'weekdays' || value === 'weekly' || value === 'monthly' || value === 'yearly'
+
+const isSubtask = (value: unknown): value is NonNullable<Task['subtasks']>[number] =>
+  isObject(value) && typeof value.id === 'string' && typeof value.title === 'string' && typeof value.completed === 'boolean'
+
+const isTask = (value: unknown): value is Task =>
+  isObject(value) &&
+  typeof value.id === 'string' &&
+  typeof value.title === 'string' &&
+  typeof value.notes === 'string' &&
+  (typeof value.groupId === 'string' || value.groupId === null) &&
+  (typeof value.date === 'string' || value.date === null) &&
+  typeof value.startMinutes === 'number' &&
+  typeof value.duration === 'number' &&
+  typeof value.completed === 'boolean' &&
+  isRepeatRule(value.repeat) &&
+  typeof value.createdAt === 'number' &&
+  (!('subtasks' in value) || (Array.isArray(value.subtasks) && value.subtasks.every(isSubtask))) &&
+  (!('seriesId' in value) || typeof value.seriesId === 'string') &&
+  (!('seriesRepeat' in value) || isRepeatRule(value.seriesRepeat))
+
+const isGroup = (value: unknown): value is Group =>
+  isObject(value) && typeof value.id === 'string' && typeof value.title === 'string' && typeof value.color === 'string'
+
+const isStoredData = (value: unknown): value is StoredData =>
+  isObject(value) &&
+  (!('app' in value) || value.app === STORE_APP) &&
+  (!('version' in value) || value.version === STORE_VERSION) &&
+  Array.isArray(value.tasks) &&
+  value.tasks.every(isTask) &&
+  Array.isArray(value.groups) &&
+  value.groups.every(isGroup)
+
+const serializeStoredData = (tasks: Task[], groups: Group[]) =>
+  JSON.stringify({ app: STORE_APP, version: STORE_VERSION, tasks, groups })
+
+function readStoredData() {
+  for (const key of [STORE, LEGACY_STORE]) {
+    try {
+      const candidate = localStorage.getItem(key)
+      if (!candidate) continue
+      const parsed = JSON.parse(candidate)
+      if (isStoredData(parsed)) return parsed
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function readStoredTheme() {
+  for (const key of [THEME_STORE, LEGACY_THEME]) {
+    const candidate = localStorage.getItem(key)
+    if (candidate === 'light' || candidate === 'dark') return candidate
+  }
+  return 'dark'
+}
 const SHORTCUT_GROUPS = [
   { title: 'Global', items: [['Double ⌘', 'Universal Capture'], ['⌘ I', 'Auto Capture'], ['⌘ K', 'Command palette'], ['Tab', 'Calendar / Focus Mode'], ['⌘ Z', 'Undo'], ['⌘ P', 'Auto Plan'], ['⌘ ⇧ P', 'Auto Schedule']] },
   { title: 'Tasks & calendar', items: [['N', 'New task'], ['⌘ N', 'Schedule new task'], ['P', 'Plan selected task'], ['S', 'Schedule selected task'], ['E', 'Edit selected task'], ['/', 'Actions'], ['⌫', 'Delete'], ['J / K', 'Next / previous task'], ['⌘ ↑ / ↓', 'Reorder task'], ['⌘ D', 'Set date'], ['1 / 2 / 3 / 4', 'Inbox / Today / Upcoming / Completed'], ['5', 'Planning view'], ['R', 'Incomplete'], ['⌘ F', 'Filter'], ['O / G', 'Groups'], ['⌘ 1 / 3 / 7 / 0', 'Calendar range'], ['⌘ C / V', 'Copy / paste task'], ['⌘ + / −', 'Calendar zoom']] },
@@ -187,19 +258,7 @@ function normalizeRecurringTasks(tasks: Task[]) {
 }
 
 export default function KinvenApp() {
-  const stored = useMemo(() => {
-    try {
-      const current = localStorage.getItem(STORE) || localStorage.getItem(LEGACY_STORE)
-      if (current) return JSON.parse(current)
-      for (let index = 0; index < localStorage.length; index += 1) {
-        const candidate = localStorage.getItem(localStorage.key(index) || '')
-        if (!candidate) continue
-        const parsed = JSON.parse(candidate)
-        if (Array.isArray(parsed?.tasks) && Array.isArray(parsed?.groups)) return parsed
-      }
-      return null
-    } catch { return null }
-  }, [])
+  const stored = useMemo(() => readStoredData(), [])
   const initialTasks = useMemo(() => normalizeRecurringTasks(stored?.tasks ?? seedTasks), [stored])
   const [tasks, setTasks] = useState<Task[]>(initialTasks)
   const [groups, setGroups] = useState<Group[]>(stored?.groups ?? seedGroups)
@@ -222,15 +281,7 @@ export default function KinvenApp() {
   const [toast, setToast] = useState('')
   const [calendarZoom, setCalendarZoom] = useState(1)
   const [pendingSeriesAction, setPendingSeriesAction] = useState<PendingSeriesAction | null>(null)
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const current = localStorage.getItem(THEME_STORE) || localStorage.getItem(LEGACY_THEME)
-    if (current === 'light' || current === 'dark') return current
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const value = localStorage.getItem(localStorage.key(index) || '')
-      if (value === 'light' || value === 'dark') return value
-    }
-    return 'dark'
-  })
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => readStoredTheme())
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [editingSection, setEditingSection] = useState<TaskEditSection>('general')
   const [deletingTask, setDeletingTask] = useState<Task | null>(null)
@@ -241,11 +292,11 @@ export default function KinvenApp() {
   const searchRef = useRef<HTMLInputElement>(null)
   const lastMetaTap = useRef(0)
   const undoStack = useRef<{ tasks: Task[]; groups: Group[] }[]>([])
-  const previousState = useRef(JSON.stringify({ tasks: initialTasks, groups: stored?.groups ?? seedGroups }))
+  const previousState = useRef(serializeStoredData(initialTasks, stored?.groups ?? seedGroups))
   const undoing = useRef(false)
 
   useEffect(() => {
-    const next = JSON.stringify({ tasks, groups })
+    const next = serializeStoredData(tasks, groups)
     if (!undoing.current && next !== previousState.current) {
       undoStack.current.push(JSON.parse(previousState.current))
       if (undoStack.current.length > 40) undoStack.current.shift()

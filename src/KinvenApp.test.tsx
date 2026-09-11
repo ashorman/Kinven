@@ -63,6 +63,20 @@ describe('identity regressions', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(localStorage.getItem('kinven-theme')).toBe('light')
   })
+
+  it('ignores task-shaped data and themes from unrelated storage keys', () => {
+    localStorage.setItem('other-app-state', JSON.stringify({
+      tasks: [{ id: 'foreign-task', title: 'Foreign task', notes: '', groupId: null, date: null, startMinutes: 540, duration: 30, completed: false, repeat: 'none', createdAt: 1 }],
+      groups: [{ id: 'foreign-group', title: 'Foreign group', color: '#7c6cf2' }],
+    }))
+    localStorage.setItem('other-app-theme', 'light')
+
+    render(<KinvenApp />)
+
+    expect(screen.queryByText('Foreign task')).not.toBeInTheDocument()
+    expect(screen.getByText('Reply to messages')).toBeInTheDocument()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+  })
 })
 
 describe('theme and header regressions', () => {

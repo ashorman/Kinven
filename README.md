@@ -26,6 +26,10 @@ Vite prints a local address, usually `http://127.0.0.1:5173`. Open that in a bro
 
 Kinven stores app data under `kinven-local-v1` and theme preference under `kinven-theme`. Older local builds migrate automatically from `aftertone-local-v1` and `aftertone-theme`.
 
+## Deployment headers
+
+The Vite preview server, Netlify-style static deployments, and Vercel deployments are configured with the same production security headers: CSP, `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Permissions-Policy`, referrer policy, and COOP. If you deploy to a host that ignores `public/_headers` and `vercel.json` (for example GitHub Pages), configure equivalent headers in that platform or at the CDN/proxy layer before publishing publicly.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) to report a vulnerability. GitHub Actions runs tests, lint, `npm audit`, CodeQL, and a secrets scan on `main`.
