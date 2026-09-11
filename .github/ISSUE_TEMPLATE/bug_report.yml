@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible Kinven bug.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include secrets, tokens, credentials, or personal task/calendar data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the bug and the behavior you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: List the shortest steps that reproduce the issue.
+      placeholder: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: "Chrome 128, Safari 18, Firefox 129, etc."
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Screenshots are okay, but redact personal data first.

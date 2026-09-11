@@ -1,5 +1,6 @@
 {
   "name": "kinven-local",
+  "description": "Local-first Kinven task and calendar app",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +9,12 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit": "npm audit --audit-level=high",
+    "security:check": "npm run lint && npm test && npm run build && npm run audit"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "date-fns": "^4.4.0",

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   Archive, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Circle, Clock3, Inbox, Moon, MoreHorizontal, Plus, Repeat2, Search, Sparkles,
-  Sun, Trash2, X,
+  Circle, Clock3, Inbox, Maximize2, Moon, MoreHorizontal, Plus, Repeat2, Search,
+  Sparkles, Sun, Trash2, X,
 } from 'lucide-react'
 import {
   addDays, addMonths, addWeeks, addYears, eachDayOfInterval, endOfMonth,
@@ -13,12 +13,14 @@ import './Kinven.css'
 type RepeatRule = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly'
 type CalendarRange = 1 | 3 | 5 | 7 | 'month'
 type View = 'calendar' | 'inbox' | 'today' | 'upcoming' | 'completed' | 'incomplete' | `group:${string}`
+type ListFilter = Exclude<View, 'calendar'>
 type Task = {
   id: string; title: string; notes: string; groupId: string | null
   date: string | null; startMinutes: number; duration: number
   completed: boolean; repeat: RepeatRule; createdAt: number
   subtasks?: { id: string; title: string; completed: boolean }[]
   seriesId?: string
+  seriesRepeat?: RepeatRule
 }
 type Group = { id: string; title: string; color: string }
 type RecurrenceScope = 'only' | 'past' | 'future' | 'all'
@@ -30,6 +32,12 @@ type PendingSeriesAction =
 const COLORS = ['#7c6cf2', '#ef6262', '#f59e4a', '#8db83f', '#42a5d9', '#d96fbd']
 const STORE = 'kinven-local-v1'
 const THEME_STORE = 'kinven-theme'
+const LEGACY_STORE = 'aftertone-local-v1'
+const LEGACY_THEME = 'aftertone-theme'
+const DAY_MINUTES = 1440
+const GRID_HEIGHT = 1440
+const minutesToOffset = (minutes: number) => (minutes / DAY_MINUTES) * 100
+const offsetToMinutes = (ratio: number) => Math.round((ratio * DAY_MINUTES) / 15) * 15
 const todayKey = () => format(new Date(), 'yyyy-MM-dd')
 const uid = () => crypto.randomUUID()
 const dateToKey = (date: Date) => format(date, 'yyyy-MM-dd')
@@ -60,23 +68,39 @@ const SHORTCUT_GROUPS = [
 ] as const
 
 function nextRepeatDate(task: Task) {
-  if (!task.date || task.repeat === 'none') return null
+  const repeat = task.seriesRepeat || task.repeat
+  if (!task.date || repeat === 'none') return null
   let next = parseISO(task.date)
-  if (task.repeat === 'daily') next = addDays(next, 1)
-  if (task.repeat === 'weekly') next = addWeeks(next, 1)
-  if (task.repeat === 'monthly') next = addMonths(next, 1)
-  if (task.repeat === 'yearly') next = addYears(next, 1)
-  if (task.repeat === 'weekdays') {
+  if (repeat === 'daily') next = addDays(next, 1)
+  if (repeat === 'weekly') next = addWeeks(next, 1)
+  if (repeat === 'monthly') next = addMonths(next, 1)
+  if (repeat === 'yearly') next = addYears(next, 1)
+  if (repeat === 'weekdays') {
     next = addDays(next, 1)
     while ([0, 6].includes(next.getDay())) next = addDays(next, 1)
   }
   return dateToKey(next)
 }
 
-function expandRecurrences(task: Task) {
-  if (!task.date || task.repeat === 'none') return [task]
+function seriesSignature(task: Task) {
+  return `${task.title}::${task.groupId || ''}::${task.startMinutes}::${task.duration}`
+}
+
+function sameSeries(a: Task, b: Task) {
+  if (a.seriesId && b.seriesId) return a.seriesId === b.seriesId
+  return seriesSignature(a) === seriesSignature(b)
+    && (a.repeat !== 'none' || b.repeat !== 'none' || !!a.seriesId || !!b.seriesId)
+}
+
+function toSeriesInstance(task: Task, seriesId: string, seriesRepeat: RepeatRule): Task {
+  return { ...task, seriesId, seriesRepeat, repeat: 'none' }
+}
+
+export function expandRecurrences(task: Task) {
+  const seriesRepeat = task.seriesRepeat || task.repeat
+  if (!task.date || seriesRepeat === 'none') return [task]
   const seriesId = task.seriesId || uid()
-  const first = { ...task, seriesId }
+  const first = toSeriesInstance({ ...task, completed: task.completed }, seriesId, seriesRepeat)
   const instances = [first]
   let cursor = first
   const horizon = addMonths(parseISO(task.date), 3)
@@ -84,19 +108,88 @@ function expandRecurrences(task: Task) {
     const date = nextRepeatDate(cursor)
     if (!date || parseISO(date) > horizon) break
     cursor = { ...first, date }
-    instances.push({ ...cursor, id: uid(), createdAt: Date.now() + index + 1 })
+    instances.push({ ...cursor, id: uid(), completed: false, createdAt: Date.now() + index + 1 })
   }
   return instances
 }
 
+export function completeTasksById(tasks: Task[], id: string, complete = true) {
+  if (!tasks.some((task) => task.id === id)) return tasks
+  return tasks.map((task) => task.id === id ? { ...task, completed: complete } : task)
+}
+
+export function matchesTaskView(task: Task, view: View, completedTasks: Task[] = []) {
+  if (view === 'completed') return completedTasks.some((item) => item.id === task.id)
+  if (task.completed) return false
+  if (view === 'inbox') return !task.date
+  if (view === 'today') return !task.date || task.date === todayKey()
+  if (view === 'upcoming') return !!task.date && task.date > todayKey()
+  if (view === 'incomplete') return true
+  if (view.startsWith('group:')) return task.groupId === view.slice(6)
+  return true
+}
+
+function sortTasksForView(items: Task[], view: View) {
+  const sortKey = (task: Task) => !task.date && view === 'today' ? '0000' : task.date || '9999'
+  return [...items].sort((a, b) => sortKey(a).localeCompare(sortKey(b)) || a.startMinutes - b.startMinutes)
+}
+
+export function tasksForFilter(tasks: Task[], filter: View, completedTasks: Task[]) {
+  const matched = filter === 'completed'
+    ? completedTasks
+    : tasks.filter((task) => matchesTaskView(task, filter, completedTasks))
+  return sortTasksForView(matched, filter)
+}
+
+export function collapseCompletedTasks(tasks: Task[]) {
+  const completed = tasks.filter((task) => task.completed)
+  const seriesBest = new Map<string, Task>()
+  const standalone: Task[] = []
+  for (const task of completed) {
+    if (task.seriesId) {
+      const existing = seriesBest.get(task.seriesId)
+      if (!existing || (task.date || '').localeCompare(existing.date || '') > 0) seriesBest.set(task.seriesId, task)
+      continue
+    }
+    standalone.push(task)
+  }
+  return [...standalone, ...seriesBest.values()]
+}
+
+export function tasksMatchingSeriesScope(tasks: Task[], base: Task, scope: RecurrenceScope) {
+  const baseOrder = base.date || String(base.createdAt)
+  return tasks.filter((task) => {
+    if (scope === 'only') return task.id === base.id
+    if (!sameSeries(task, base)) return false
+    const taskOrder = task.date || String(task.createdAt)
+    if (scope === 'past') return taskOrder <= baseOrder
+    if (scope === 'future') return taskOrder >= baseOrder
+    return true
+  })
+}
+
 function normalizeRecurringTasks(tasks: Task[]) {
-  return tasks.flatMap((task) => task.repeat !== 'none' && !task.seriesId ? expandRecurrences(task) : [task])
+  const migrated = tasks.map((task) => {
+    if (!task.seriesId || task.repeat === 'none') return task
+    return { ...task, seriesRepeat: task.seriesRepeat || task.repeat, repeat: 'none' as RepeatRule }
+  })
+  const expanded = migrated.flatMap((task) => task.repeat !== 'none' && !task.seriesId ? expandRecurrences(task) : [task])
+  const seenIds = new Set<string>()
+  const seenOccurrences = new Set<string>()
+  return expanded.filter((task) => {
+    if (seenIds.has(task.id)) return false
+    seenIds.add(task.id)
+    const occurrenceKey = `${task.seriesId || seriesSignature(task)}:${task.date || 'inbox'}`
+    if (seenOccurrences.has(occurrenceKey)) return false
+    seenOccurrences.add(occurrenceKey)
+    return true
+  })
 }
 
 export default function KinvenApp() {
   const stored = useMemo(() => {
     try {
-      const current = localStorage.getItem(STORE)
+      const current = localStorage.getItem(STORE) || localStorage.getItem(LEGACY_STORE)
       if (current) return JSON.parse(current)
       for (let index = 0; index < localStorage.length; index += 1) {
         const candidate = localStorage.getItem(localStorage.key(index) || '')
@@ -117,8 +210,9 @@ export default function KinvenApp() {
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [creatingTask, setCreatingTask] = useState<Partial<Task> | null>(null)
   const [editingGroup, setEditingGroup] = useState<Group | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selectionMode, setSelectionMode] = useState(false)
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [focusMode, setFocusMode] = useState(false)
   const [focusSubtask, setFocusSubtask] = useState(false)
@@ -129,7 +223,7 @@ export default function KinvenApp() {
   const [calendarZoom, setCalendarZoom] = useState(1)
   const [pendingSeriesAction, setPendingSeriesAction] = useState<PendingSeriesAction | null>(null)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const current = localStorage.getItem(THEME_STORE)
+    const current = localStorage.getItem(THEME_STORE) || localStorage.getItem(LEGACY_THEME)
     if (current === 'light' || current === 'dark') return current
     for (let index = 0; index < localStorage.length; index += 1) {
       const value = localStorage.getItem(localStorage.key(index) || '')
@@ -140,6 +234,8 @@ export default function KinvenApp() {
   const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null)
   const [editingSection, setEditingSection] = useState<TaskEditSection>('general')
   const [deletingTask, setDeletingTask] = useState<Task | null>(null)
+  const [deletingAllCompleted, setDeletingAllCompleted] = useState(false)
+  const [paneFilter, setPaneFilter] = useState<ListFilter>('inbox')
   const copiedTask = useRef<Task | null>(null)
   const zoning = useRef<{ task: Task } | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -166,19 +262,27 @@ export default function KinvenApp() {
     const timer = window.setTimeout(() => setToast(''), 2200)
     return () => window.clearTimeout(timer)
   }, [toast])
+  useEffect(() => {
+    setSelected(new Set())
+    setSelectionMode(false)
+  }, [view])
   const groupMap = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups])
   const inboxTasks = tasks.filter((task) => !task.date && !task.completed)
+  const completedTasks = useMemo(() => collapseCompletedTasks(tasks), [tasks])
+  const searchQuery = search.trim().toLowerCase()
+  const searchActive = searchQuery.length > 0
   const visibleTasks = useMemo(() => {
-    let result = tasks
-    if (view === 'inbox') result = tasks.filter((t) => !t.date && !t.completed)
-    if (view === 'today') result = tasks.filter((t) => t.date === todayKey() && !t.completed)
-    if (view === 'upcoming') result = tasks.filter((t) => !!t.date && t.date > todayKey() && !t.completed)
-    if (view === 'completed') result = tasks.filter((t) => t.completed)
-    if (view === 'incomplete') result = tasks.filter((t) => !t.completed)
-    if (view.startsWith('group:')) result = tasks.filter((t) => t.groupId === view.slice(6) && !t.completed)
-    if (search.trim()) result = result.filter((t) => t.title.toLowerCase().includes(search.toLowerCase()))
-    return [...result].sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || a.startMinutes - b.startMinutes)
-  }, [tasks, view, search])
+    if (searchQuery) return sortTasksForView(tasks.filter((task) => task.title.toLowerCase().includes(searchQuery)), view)
+    return tasksForFilter(tasks, view, completedTasks)
+  }, [tasks, view, searchQuery, completedTasks])
+  const paneTasks = useMemo(() => tasksForFilter(tasks, paneFilter, completedTasks), [tasks, paneFilter, completedTasks])
+  const filterLabel = (filter: ListFilter) => filter.startsWith('group:')
+    ? groupMap.get(filter.slice(6))?.title || 'Group'
+    : filter[0].toUpperCase() + filter.slice(1)
+  const paneLabel = filterLabel(paneFilter)
+  // On the calendar the sidebar retargets the planning pane; elsewhere it navigates.
+  const activeFilter: ListFilter = view === 'calendar' ? paneFilter : view
+  const selectFilter = (filter: ListFilter) => view === 'calendar' ? setPaneFilter(filter) : setView(filter)
   const calendarDays = useMemo(() => {
     if (range === 'month') {
       const start = startOfWeek(startOfMonth(anchor), { weekStartsOn: 1 })
@@ -191,20 +295,13 @@ export default function KinvenApp() {
 
   const updateTask = (next: Task) => setTasks((items) => items.map((item) => item.id === next.id ? next : item))
   const completeTask = (id: string, complete = true) => {
-    setTasks((items) => items.map((item) => item.id === id
-      ? {
-          ...item,
-          completed: complete,
-          date: item.date,
-          startMinutes: item.startMinutes,
-          groupId: item.groupId,
-        }
-      : item))
+    setTasks((items) => completeTasksById(items, id, complete))
     setToast(complete ? 'Moved to Completed' : 'Marked incomplete')
   }
   const removeTask = useCallback((id: string) => {
     const task = tasks.find((item) => item.id === id)
-    if (task?.seriesId && tasks.some((item) => item.id !== id && item.seriesId === task.seriesId)) {
+    if (!task) return
+    if (tasks.some((item) => item.id !== id && sameSeries(item, task))) {
       setPendingSeriesAction({ kind: 'delete', task })
       return
     }
@@ -213,26 +310,19 @@ export default function KinvenApp() {
   }, [tasks])
   const applySeriesAction = (scope: RecurrenceScope) => {
     if (!pendingSeriesAction) return
-    const base = pendingSeriesAction.kind === 'edit' ? pendingSeriesAction.original : pendingSeriesAction.task
-    const isIncluded = (task: Task) => {
-      if (scope === 'only') return task.id === base.id
-      if (!base.seriesId || task.seriesId !== base.seriesId) return false
-      const taskOrder = task.date || String(task.createdAt)
-      const baseOrder = base.date || String(base.createdAt)
-      if (scope === 'past') return taskOrder <= baseOrder
-      if (scope === 'future') return taskOrder >= baseOrder
-      return true
-    }
-    if (pendingSeriesAction.kind === 'delete') {
-      setTasks((items) => items.filter((task) => !isIncluded(task)))
-    } else {
-      const { original, next } = pendingSeriesAction
+    const action = pendingSeriesAction
+    const base = action.kind === 'edit' ? action.original : action.task
+    setTasks((items) => {
+      const targets = tasksMatchingSeriesScope(items, base, scope)
+      const targetIds = new Set(targets.map((task) => task.id))
+      if (action.kind === 'delete') return items.filter((task) => !targetIds.has(task.id))
+      const { original, next } = action
       const dateShift = original.date && next.date
         ? differenceInCalendarDays(parseISO(next.date), parseISO(original.date))
         : 0
-      setTasks((items) => items.map((task) => {
-        if (!isIncluded(task)) return task
-        if (scope === 'only') return next.repeat === 'none' ? { ...next, seriesId: undefined } : next
+      return items.map((task) => {
+        if (!targetIds.has(task.id)) return task
+        if (scope === 'only') return next.repeat === 'none' ? { ...next, seriesId: undefined, seriesRepeat: undefined } : next
         const shiftedDate = next.date === null
           ? null
           : task.date ? dateToKey(addDays(parseISO(task.date), dateShift)) : next.date
@@ -247,20 +337,23 @@ export default function KinvenApp() {
           repeat: next.repeat,
           subtasks: next.subtasks,
           seriesId: next.repeat === 'none' ? undefined : task.seriesId,
+          seriesRepeat: next.repeat === 'none' ? undefined : task.seriesRepeat,
         }
-      }))
-    }
+      })
+    })
     setPendingSeriesAction(null)
     setEditingTask(null)
     setCreatingTask(null)
-    setToast(pendingSeriesAction.kind === 'delete' ? 'Recurring tasks deleted' : 'Recurring tasks updated')
+    setDeletingTask(null)
+    setToast(action.kind === 'delete' ? 'Recurring tasks deleted' : 'Recurring tasks updated')
   }
   const createQuickTask = () => {
     if (!quickTitle.trim()) return
     const titles = quickTitle.split(';').map((title) => title.trim()).filter(Boolean)
+    const groupId = view.startsWith('group:') ? view.slice(6) : null
+    const date = view === 'upcoming' ? dateToKey(addDays(new Date(), 1)) : null
     setTasks((items) => [...items, ...titles.map((title) => ({
-      id: uid(), title, notes: '', groupId: view.startsWith('group:') ? view.slice(6) : null,
-      date: view === 'today' ? todayKey() : null, startMinutes: 540, duration: 30,
+      id: uid(), title, notes: '', groupId, date, startMinutes: 540, duration: 30,
       completed: false, repeat: 'none' as RepeatRule, createdAt: Date.now(),
     }))])
     setQuickTitle('')
@@ -271,26 +364,52 @@ export default function KinvenApp() {
     setEditingGroup(null)
     if (view === `group:${id}`) setView('inbox')
   }
-  const batch = (action: 'complete' | 'delete' | 'inbox') => {
+  const toggleSelected = (id: string) => setSelected((current) => {
+    const next = new Set(current)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+  const batch = (action: 'complete' | 'incomplete' | 'delete' | 'inbox' | 'group', groupId?: string | null) => {
     if (action === 'delete') {
-      const recurring = tasks.find((task) => selected.has(task.id) && task.seriesId)
-      if (recurring) {
-        setPendingSeriesAction({ kind: 'delete', task: recurring })
+      const selectedList = tasks.filter((task) => selected.has(task.id))
+      if (selectedList.length === 1 && selectedList.some((task) => task.seriesId || task.seriesRepeat)) {
+        setPendingSeriesAction({ kind: 'delete', task: selectedList[0] })
         return
       }
+      const idsToDelete = new Set<string>()
+      selectedList.forEach((task) => {
+        if (task.seriesId) tasks.filter((item) => item.seriesId === task.seriesId).forEach((item) => idsToDelete.add(item.id))
+        else idsToDelete.add(task.id)
+      })
+      setTasks((items) => items.filter((task) => !idsToDelete.has(task.id)))
+      setSelected(new Set())
+      setToast('Tasks deleted')
+      return
     }
-    setTasks((items) => items
-      .filter((task) => action !== 'delete' || !selected.has(task.id))
-      .map((task) => !selected.has(task.id) ? task : action === 'complete'
-        ? { ...task, completed: true }
-        : action === 'inbox' ? { ...task, date: null } : task))
+    setTasks((items) => items.map((task) => {
+      if (!selected.has(task.id)) return task
+      if (action === 'complete') return { ...task, completed: true }
+      if (action === 'incomplete') return { ...task, completed: false }
+      if (action === 'inbox') return { ...task, date: null }
+      if (action === 'group') return { ...task, groupId: groupId ?? null }
+      return task
+    }))
     setSelected(new Set())
+    setToast(action === 'group' ? 'Group updated' : 'Tasks updated')
+  }
+  const deleteAllCompleted = () => {
+    setTasks((items) => items.filter((task) => !task.completed))
+    setSelected(new Set())
+    setSelectionMode(false)
+    setDeletingAllCompleted(false)
+    setToast('Completed tasks deleted')
   }
   const openScheduledTask = (date: Date, startMinutes = 540) =>
     setCreatingTask({ date: dateToKey(date), startMinutes, duration: 30 })
   const scheduleDroppedTask = (taskId: string, day: Date, clientY: number, rect: DOMRect) => {
-    const raw = 420 + ((clientY - rect.top) / rect.height) * 780
-    const snapped = Math.max(420, Math.min(1170, Math.round(raw / 15) * 15))
+    const raw = offsetToMinutes((clientY - rect.top) / rect.height)
+    const snapped = Math.max(0, Math.min(DAY_MINUTES - 15, raw))
     setTasks((items) => items.map((task) => task.id === taskId
       ? { ...task, date: dateToKey(day), startMinutes: snapped } : task))
   }
@@ -319,6 +438,24 @@ export default function KinvenApp() {
         } else lastMetaTap.current = Date.now()
         return
       }
+      if (deletingTask || deletingAllCompleted) {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          setDeletingTask(null)
+          setDeletingAllCompleted(false)
+          return
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          if (deletingTask) {
+            const taskId = deletingTask.id
+            setDeletingTask(null)
+            removeTask(taskId)
+          } else deleteAllCompleted()
+          return
+        }
+        return
+      }
       if (event.key === 'Escape') {
         if (zoning.current) {
           updateTask(zoning.current.task)
@@ -326,7 +463,7 @@ export default function KinvenApp() {
           setToast('Placement cancelled')
         }
         setEditingTask(null); setCreatingTask(null); setEditingGroup(null); setEditingSection('general')
-        setCommandPalette(false); setShortcutHelp(false); setFocusSubtask(false); setPendingSeriesAction(null); setDeletingTask(null)
+        setCommandPalette(false); setShortcutHelp(false); setFocusSubtask(false); setPendingSeriesAction(null)
         return
       }
       if (mod && key === 'k') {
@@ -419,7 +556,7 @@ export default function KinvenApp() {
           event.preventDefault()
           const delta = mod ? (event.key === 'ArrowDown' ? 15 : -15) : (event.key === 'ArrowDown' ? 15 : -15)
           if (mod) updateTask({ ...current, duration: Math.max(15, current.duration + delta) })
-          else updateTask({ ...current, startMinutes: Math.max(420, Math.min(1185, current.startMinutes + delta)) })
+          else updateTask({ ...current, startMinutes: Math.max(0, Math.min(DAY_MINUTES - 15, current.startMinutes + delta)) })
           return
         }
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -520,7 +657,7 @@ export default function KinvenApp() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeTaskId, autoExtend, commandPalette, creatingTask, editingGroup, editingTask, focusMode, focusTask, groups, hoveredTask, inboxTasks, now, removeTask, shortcutHelp, tasks, view, visibleTasks])
+  }, [activeTaskId, autoExtend, commandPalette, creatingTask, deletingAllCompleted, deletingTask, editingGroup, editingTask, focusMode, focusTask, groups, hoveredTask, inboxTasks, now, removeTask, shortcutHelp, tasks, view, visibleTasks])
 
   const runCommand = (id: string) => {
     setCommandPalette(false)
@@ -541,12 +678,18 @@ export default function KinvenApp() {
     if (id === 'complete' && activeTask) completeTask(activeTask.id)
   }
 
-  return <div className="app-shell" onMouseOver={(event) => {
-    const taskElement = (event.target as HTMLElement).closest<HTMLElement>('[data-task-id]')
+  const trackHoveredTask = (target: EventTarget | null) => {
+    const taskElement = (target as HTMLElement | null)?.closest?.<HTMLElement>('[data-task-id]')
     setHoveredTaskId(taskElement?.dataset.taskId || null)
+  }
+
+  return <div className="app-shell" onMouseOver={(event) => {
+    trackHoveredTask(event.target)
+  }} onMouseMove={(event) => {
+    trackHoveredTask(event.target)
   }} onMouseLeave={() => setHoveredTaskId(null)}>
     <header className="titlebar">
-      <div className="traffic-lights"><i /><i /><i /></div>
+      <span className="app-brand" aria-label="Kinven">Kinven</span>
       <nav>
         <button className={view !== 'calendar' ? 'active' : ''} onClick={() => setView('today')}>Tasks</button>
         <button className={view === 'calendar' ? 'active' : ''} onClick={() => setView('calendar')}>Calendar</button>
@@ -556,34 +699,50 @@ export default function KinvenApp() {
 
     <div className="workspace">
       <aside className="sidebar">
-        <div className="search-box"><Search size={15} /><input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tasks" /></div>
-        <SidebarButton icon={<Inbox />} label="Inbox" count={inboxTasks.length} active={view === 'inbox'} onClick={() => setView('inbox')} />
-        <SidebarButton icon={<CalendarDays />} label="Today" count={tasks.filter((t) => t.date === todayKey() && !t.completed).length} active={view === 'today'} onClick={() => setView('today')} />
-        <SidebarButton icon={<Clock3 />} label="Upcoming" count={tasks.filter((t) => !!t.date && t.date > todayKey() && !t.completed).length} active={view === 'upcoming'} onClick={() => setView('upcoming')} />
-        <SidebarButton icon={<CheckCircle2 />} label="Completed" count={tasks.filter((t) => t.completed).length} active={view === 'completed'} onClick={() => setView('completed')} />
-        <div className="section-title"><span>Groups</span><button onClick={() => setEditingGroup({ id: '', title: '', color: COLORS[0] })}><Plus size={15} /></button></div>
-        {groups.map((group) => <div className={`group-row ${view === `group:${group.id}` ? 'active' : ''}`} key={group.id}>
-          <button className="group-link" onClick={() => setView(`group:${group.id}`)}>
+        <div className="search-box">
+          <Search size={15} />
+          <input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search tasks" aria-label="Search tasks" />
+          {search && <button className="search-clear" aria-label="Clear search" onClick={() => setSearch('')}><X size={14} /></button>}
+        </div>
+        <SidebarButton icon={<Inbox />} label="Inbox" count={inboxTasks.length} active={activeFilter === 'inbox'} onClick={() => selectFilter('inbox')} />
+        <SidebarButton icon={<CalendarDays />} label="Today" count={tasks.filter((t) => matchesTaskView(t, 'today')).length} active={activeFilter === 'today'} onClick={() => selectFilter('today')} />
+        <SidebarButton icon={<Clock3 />} label="Upcoming" count={tasks.filter((t) => !!t.date && t.date > todayKey() && !t.completed).length} active={activeFilter === 'upcoming'} onClick={() => selectFilter('upcoming')} />
+        <SidebarButton icon={<CheckCircle2 />} label="Completed" count={completedTasks.length} active={activeFilter === 'completed'} onClick={() => selectFilter('completed')} />
+        <div className="section-title"><span>Groups</span><button aria-label="Add group" onClick={() => setEditingGroup({ id: '', title: '', color: COLORS[0] })}><Plus size={15} /></button></div>
+        {groups.map((group) => <div className={`group-row ${activeFilter === `group:${group.id}` ? 'active' : ''}`} key={group.id}>
+          <button className="group-link" aria-label={group.title} onClick={() => selectFilter(`group:${group.id}`)}>
             <span className="color-dot" style={{ background: group.color }} /><span>{group.title}</span>
-            <b>{tasks.filter((t) => t.groupId === group.id && !t.completed).length}</b>
+            <b aria-hidden="true">{tasks.filter((t) => t.groupId === group.id && !t.completed).length}</b>
           </button>
-          <button className="group-edit" onClick={() => setEditingGroup(group)}><MoreHorizontal size={15} /></button>
+          <button className="group-edit" aria-label="Edit group" title={`Edit ${group.title}`} onClick={() => setEditingGroup(group)}><MoreHorizontal size={15} /></button>
         </div>)}
-        <button className="sidebar-new" onClick={() => setCreatingTask({})}><Plus size={16} /> New task</button>
+        <button className="sidebar-new" onClick={() => setCreatingTask({})}><Plus size={14} /> New task</button>
         <div className="local-badge"><Archive size={14} /> Saved locally</div>
       </aside>
 
-      {view === 'calendar' ? <main className="calendar-view">
+      {view === 'calendar' && !searchActive ? <main className="calendar-view">
         <section className="planning-pane" data-inbox-drop onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
           const taskId = event.dataTransfer.getData('taskId')
-          if (taskId) setTasks((items) => items.map((task) => task.id === taskId ? { ...task, date: null } : task))
+          if (!taskId) return
+          setTasks((items) => items.map((task) => task.id === taskId ? { ...task, date: null } : task))
+          setToast('Moved to Inbox')
         }}>
-          <div className="pane-heading"><div><span className="eyebrow">Planning</span><h2>Inbox</h2></div><button className="icon-button" onClick={() => setCreatingTask({})}><Plus /></button></div>
-          <div className="quick-create"><input value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createQuickTask()} placeholder="New task" /><kbd>N</kbd></div>
-          <p className="drag-hint">Drag a task onto the calendar to schedule it.</p>
+          <div className="pane-heading">
+            <div><span className="eyebrow">Planning</span><h2>{paneLabel}</h2></div>
+            <div className="pane-actions">
+              <button className="icon-button" aria-label="Open full list" title={`Open ${paneLabel} as a full list`} onClick={() => setView(paneFilter)}><Maximize2 /></button>
+              <button className="icon-button" onClick={() => setCreatingTask({})}><Plus /></button>
+            </div>
+          </div>
+          <div className="quick-create"><input value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createQuickTask()} placeholder="New task" /></div>
+          <p className="drag-hint">{paneFilter === 'inbox'
+            ? 'Unscheduled tasks only. Drag onto the calendar to schedule.'
+            : `Showing ${paneLabel}. Drag any task onto the calendar to reschedule.`}</p>
           <div className="backlog">
-            {inboxTasks.map((task) => <TaskRow task={task} group={task.groupId ? groupMap.get(task.groupId) : undefined} active={activeTaskId === task.id} key={task.id} onEdit={() => { setActiveTaskId(task.id); setEditingTask(task) }} onComplete={() => completeTask(task.id)} draggable />)}
-            {!inboxTasks.length && <EmptyState title="Inbox zero" copy="Everything has a place." />}
+            {paneTasks.map((task) => <TaskRow task={task} group={task.groupId ? groupMap.get(task.groupId) : undefined} active={activeTaskId === task.id} key={task.id} onEdit={() => { setActiveTaskId(task.id); setEditingTask(task) }} onComplete={() => completeTask(task.id, !task.completed)} draggable />)}
+            {!paneTasks.length && (paneFilter === 'inbox'
+              ? <EmptyState title="Inbox zero" copy="Scheduled tasks appear on the calendar. Drop one here to unschedule." />
+              : <EmptyState title={`${paneLabel} is empty`} copy="Nothing to plan here right now." />)}
           </div>
           <div className="inbox-drop-hint"><Inbox /> Drop calendar tasks here to unschedule</div>
         </section>
@@ -593,33 +752,37 @@ export default function KinvenApp() {
             ? <MonthCalendar days={calendarDays} anchor={anchor} tasks={tasks} groupMap={groupMap} onTask={(task) => { setActiveTaskId(task.id); setEditingTask(task) }} onDay={openScheduledTask} />
             : <TimeCalendar days={calendarDays} tasks={tasks} groupMap={groupMap} onTask={(task) => { setActiveTaskId(task.id); setEditingTask(task) }} onEmpty={openScheduledTask} onDrop={scheduleDroppedTask} updateTask={updateTask} completeTask={completeTask} zoom={calendarZoom} activeTaskId={activeTaskId} />}
         </section>
-      </main> : <main className="list-view">
-        <div className="list-header">
-          <div><span className="eyebrow">Tasks</span><h1>{view.startsWith('group:') ? groupMap.get(view.slice(6))?.title : view[0].toUpperCase() + view.slice(1)}</h1><p>{visibleTasks.length} {visibleTasks.length === 1 ? 'task' : 'tasks'}</p></div>
-          <button className="primary" onClick={() => setCreatingTask({ groupId: view.startsWith('group:') ? view.slice(6) : null, date: view === 'today' ? todayKey() : null })}><Plus size={17} /> Add task</button>
-        </div>
-        <div className="quick-create large"><input autoFocus value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createQuickTask()} placeholder="Type tasks separated by semicolons, then press Enter…" /><span>Quick add</span></div>
-        {selected.size > 0 && <div className="batch-bar"><b>{selected.size} selected</b><button onClick={() => batch('complete')}><Check /> Complete</button><button onClick={() => batch('inbox')}><Inbox /> Move to inbox</button><button className="danger-text" onClick={() => batch('delete')}><Trash2 /> Delete</button><button onClick={() => setSelected(new Set())}><X /></button></div>}
-        <div className="task-list">
-          {visibleTasks.map((task) => <div className={`list-task ${selected.has(task.id) ? 'selected' : ''}`} key={task.id}>
-            <button className="select-box" onClick={() => setSelected((set) => {
-              const next = new Set(set)
-              if (next.has(task.id)) next.delete(task.id)
-              else next.add(task.id)
-              return next
-            })}>{selected.has(task.id) && <Check size={13} />}</button>
-            <TaskRow task={task} group={task.groupId ? groupMap.get(task.groupId) : undefined} active={activeTaskId === task.id} onEdit={() => { setActiveTaskId(task.id); setEditingTask(task) }} onComplete={() => completeTask(task.id, !task.completed)} />
-          </div>)}
-          {!visibleTasks.length && <EmptyState title="All clear" copy="Nothing needs your attention here." />}
-        </div>
-      </main>}
+      </main> : <ListView
+        view={view}
+        groups={groups}
+        groupMap={groupMap}
+        visibleTasks={visibleTasks}
+        searchActive={searchActive}
+        searchQuery={search}
+        setSearch={setSearch}
+        quickTitle={quickTitle}
+        setQuickTitle={setQuickTitle}
+        createQuickTask={createQuickTask}
+        selectionMode={selectionMode}
+        setSelectionMode={setSelectionMode}
+        selected={selected}
+        setSelected={setSelected}
+        toggleSelected={toggleSelected}
+        batch={batch}
+        onDeleteAllCompleted={() => setDeletingAllCompleted(true)}
+        activeTaskId={activeTaskId}
+        setActiveTaskId={setActiveTaskId}
+        setEditingTask={setEditingTask}
+        setCreatingTask={setCreatingTask}
+        completeTask={completeTask}
+      />}
     </div>
 
     {(editingTask || creatingTask) && <TaskModal key={editingTask?.id || 'new-task'} task={editingTask} draft={creatingTask} groups={groups} initialSection={editingTask ? editingSection : 'general'} onCreateGroup={(group) => setGroups((items) => [...items, group])} onClose={() => { setEditingTask(null); setCreatingTask(null); setEditingSection('general') }} onDelete={(id) => {
       const task = tasks.find((item) => item.id === id)
       if (task) setDeletingTask(task)
     }} onSave={(task) => {
-      if (editingTask?.seriesId && tasks.some((item) => item.id !== editingTask.id && item.seriesId === editingTask.seriesId)) {
+      if (editingTask && tasks.some((item) => item.id !== editingTask.id && sameSeries(item, editingTask))) {
         setPendingSeriesAction({ kind: 'edit', original: editingTask, next: task })
         return
       }
@@ -650,11 +813,146 @@ export default function KinvenApp() {
       setDeletingTask(null)
       removeTask(taskId)
     }} />}
+    {deletingAllCompleted && <DeleteAllCompletedModal count={completedTasks.length} onClose={() => setDeletingAllCompleted(false)} onConfirm={deleteAllCompleted} />}
   </div>
 }
 
+function ListView({
+  view, groups, groupMap, visibleTasks, searchActive, searchQuery, setSearch, quickTitle, setQuickTitle, createQuickTask,
+  selectionMode, setSelectionMode, selected, setSelected, toggleSelected, batch, onDeleteAllCompleted,
+  activeTaskId, setActiveTaskId, setEditingTask, setCreatingTask, completeTask,
+}: {
+  view: View
+  groups: Group[]
+  groupMap: Map<string, Group>
+  visibleTasks: Task[]
+  searchActive: boolean
+  searchQuery: string
+  setSearch: (value: string) => void
+  quickTitle: string
+  setQuickTitle: (value: string) => void
+  createQuickTask: () => void
+  selectionMode: boolean
+  setSelectionMode: (enabled: boolean) => void
+  selected: Set<string>
+  setSelected: Dispatch<SetStateAction<Set<string>>>
+  toggleSelected: (id: string) => void
+  batch: (action: 'complete' | 'incomplete' | 'delete' | 'inbox' | 'group', groupId?: string | null) => void
+  onDeleteAllCompleted: () => void
+  activeTaskId: string | null
+  setActiveTaskId: (id: string) => void
+  setEditingTask: (task: Task) => void
+  setCreatingTask: (draft: Partial<Task> | null) => void
+  completeTask: (id: string, complete?: boolean) => void
+}) {
+  const scheduledTasks = visibleTasks.filter((task) => !!task.date)
+  const unscheduledTasks = visibleTasks.filter((task) => !task.date)
+  const showSections = scheduledTasks.length > 0 && unscheduledTasks.length > 0
+  const scheduledCount = visibleTasks.filter((task) => !!task.date).length
+  const unscheduledCount = visibleTasks.length - scheduledCount
+  const taskSummary = scheduledCount > 0 && unscheduledCount > 0
+    ? `${visibleTasks.length} tasks · ${scheduledCount} scheduled · ${unscheduledCount} unscheduled`
+    : scheduledCount > 0
+      ? `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'} · all scheduled`
+      : unscheduledCount > 0
+        ? `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'} · all unscheduled`
+        : `${visibleTasks.length} ${visibleTasks.length === 1 ? 'task' : 'tasks'}`
+
+  const renderTask = (task: Task) => <TaskRow
+    task={task}
+    group={task.groupId ? groupMap.get(task.groupId) : undefined}
+    active={activeTaskId === task.id}
+    key={task.id}
+    showScheduleBadge
+    selectionMode={selectionMode}
+    selected={selected.has(task.id)}
+    onToggleSelect={() => toggleSelected(task.id)}
+    onEdit={() => { setActiveTaskId(task.id); setEditingTask(task) }}
+    onComplete={() => completeTask(task.id, !task.completed)}
+  />
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false)
+    setSelected(new Set())
+  }
+
+  const listTitle = searchActive
+    ? 'Search'
+    : view.startsWith('group:')
+      ? groupMap.get(view.slice(6))?.title
+      : view[0].toUpperCase() + view.slice(1)
+  const listSummary = searchActive
+    ? `${visibleTasks.length} ${visibleTasks.length === 1 ? 'result' : 'results'} for “${searchQuery.trim()}”`
+    : taskSummary
+
+  return <main className="list-view">
+    <div className="list-header">
+      <div>
+        <span className="eyebrow">Tasks</span>
+        <h1>{listTitle}</h1>
+        <p>{listSummary}</p>
+      </div>
+      <div className="list-header-actions">
+        {view === 'completed' && !searchActive && visibleTasks.length > 0 && !selectionMode && (
+          <button className="select-toggle danger-outline" onClick={onDeleteAllCompleted}>Delete all</button>
+        )}
+        <button
+          className={`select-toggle ${selectionMode ? 'active' : ''}`}
+          aria-pressed={selectionMode}
+          onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+        >
+          {selectionMode ? 'Done' : 'Select'}
+        </button>
+        <button className="primary" onClick={() => setCreatingTask({ groupId: view.startsWith('group:') ? view.slice(6) : null })}><Plus size={17} /> Add task</button>
+      </div>
+    </div>
+    {searchActive && <div className="search-results-banner"><span>Showing matches across all tasks.</span><button onClick={() => setSearch('')}>Clear search</button></div>}
+    {view === 'inbox' && !searchActive && <p className="view-hint">Inbox holds unscheduled tasks only. Once a task gets a date it moves to Today, Upcoming, and the calendar.</p>}
+    <div className="quick-create large"><input autoFocus={!searchActive} value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && createQuickTask()} placeholder="Type tasks separated by semicolons, then press Enter…" /><span>Quick add</span></div>
+    {selectionMode && <div className="batch-bar">
+      <b>{selected.size} selected</b>
+      {visibleTasks.length > 0 && <button onClick={() => setSelected(new Set(visibleTasks.map((task) => task.id)))}>Select all</button>}
+      {selected.size > 0 && <>
+      <button onClick={() => batch('complete')}><Check /> Complete</button>
+      {view === 'completed' && <button onClick={() => batch('incomplete')}><Circle /> Mark incomplete</button>}
+      <button onClick={() => batch('inbox')}><Inbox /> Move to inbox</button>
+      <label className="batch-group">
+        <span>Group</span>
+        <select aria-label="Group" defaultValue="" onChange={(e) => {
+          if (!e.target.value) return
+          batch('group', e.target.value === '__none__' ? null : e.target.value)
+          e.target.value = ''
+        }}>
+          <option value="">Assign…</option>
+          <option value="__none__">No group</option>
+          {groups.map((group) => <option value={group.id} key={group.id}>{group.title}</option>)}
+        </select>
+      </label>
+      <button className="danger-text" onClick={() => batch('delete')}><Trash2 /> Delete</button>
+      <button onClick={() => setSelected(new Set())}><X /></button>
+      </>}
+    </div>}
+    {selectionMode && <p className="selection-hint">Tap tasks to select them, then use the actions above.</p>}
+    <div className="task-list">
+      {showSections ? <>
+        <section className="task-section">
+          <h3 className="task-section-title">Scheduled</h3>
+          <div className="task-section-list">{scheduledTasks.map(renderTask)}</div>
+        </section>
+        <section className="task-section">
+          <h3 className="task-section-title">Unscheduled</h3>
+          <div className="task-section-list">{unscheduledTasks.map(renderTask)}</div>
+        </section>
+      </> : visibleTasks.map(renderTask)}
+      {!visibleTasks.length && (view === 'inbox' && !searchActive
+        ? <EmptyState title="Inbox zero" copy="Nothing unscheduled. Scheduled tasks live in Today, Upcoming, and the calendar." />
+        : <EmptyState title="All clear" copy="Nothing needs your attention here." />)}
+    </div>
+  </main>
+}
+
 function SidebarButton({ icon, label, count, active, onClick }: { icon: React.ReactNode; label: string; count: number; active: boolean; onClick: () => void }) {
-  return <button className={`sidebar-button ${active ? 'active' : ''}`} onClick={onClick}><span>{icon}{label}</span>{count > 0 && <b>{count}</b>}</button>
+  return <button className={`sidebar-button ${active ? 'active' : ''}`} aria-label={label} onClick={onClick}><span>{icon}{label}</span>{count > 0 && <b aria-hidden="true">{count}</b>}</button>
 }
 function EmptyState({ title, copy }: { title: string; copy: string }) {
   return <div className="empty-state"><span><Check /></span><h3>{title}</h3><p>{copy}</p></div>
@@ -695,14 +993,14 @@ function ShortcutReference({ onClose }: { onClose: () => void }) {
 function RecurrenceScopeModal({ kind, onClose, onChoose }: { kind: 'edit' | 'delete'; onClose: () => void; onChoose: (scope: RecurrenceScope) => void }) {
   const verb = kind === 'edit' ? 'Apply changes to' : 'Delete'
   return <div className="modal-backdrop recurrence-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
-    <div className="recurrence-modal">
+    <div className="recurrence-modal" onMouseDown={(event) => event.stopPropagation()}>
       <div className="modal-title"><div><span className="eyebrow">Recurring task</span><h2>{kind === 'edit' ? 'Which tasks should change?' : 'Which tasks should be deleted?'}</h2></div><button className="icon-button" onClick={onClose}><X /></button></div>
       <p>This task belongs to a repeating series. Choose the range before continuing.</p>
       <div className="scope-options">
-        <button onClick={() => onChoose('only')}><strong>This task only</strong><span>{verb} this occurrence without affecting the rest.</span></button>
-        <button onClick={() => onChoose('past')}><strong>This and all previous tasks</strong><span>{verb} this occurrence and every earlier occurrence.</span></button>
-        <button onClick={() => onChoose('future')}><strong>This and all future tasks</strong><span>{verb} this occurrence and every later occurrence.</span></button>
-        <button className={kind === 'delete' ? 'danger-option' : ''} onClick={() => onChoose('all')}><strong>All previous and future tasks</strong><span>{verb} the entire repeating series.</span></button>
+        <button type="button" onClick={() => onChoose('only')}><strong>This task only</strong><span>{verb} this occurrence without affecting the rest.</span></button>
+        <button type="button" onClick={() => onChoose('past')}><strong>This and all previous tasks</strong><span>{verb} this occurrence and every earlier occurrence.</span></button>
+        <button type="button" onClick={() => onChoose('future')}><strong>This and all future tasks</strong><span>{verb} this occurrence and every later occurrence.</span></button>
+        <button type="button" className={kind === 'delete' ? 'danger-option' : ''} onClick={() => onChoose('all')}><strong>All previous and future tasks</strong><span>{verb} the entire repeating series.</span></button>
       </div>
     </div>
   </div>
@@ -714,7 +1012,18 @@ function DeleteTaskModal({ task, onClose, onConfirm }: { task: Task; onClose: ()
       <div className="delete-confirm-icon"><Trash2 /></div>
       <h2 id="delete-task-title">Delete “{task.title}”?</h2>
       <p>This cannot be undone from the task menu.</p>
-      <div><button onClick={onClose}>Cancel</button><button className="confirm-delete" onClick={onConfirm}>Delete task</button></div>
+      <div><button onClick={onClose}>Cancel</button><button className="confirm-delete" autoFocus onClick={onConfirm}>Delete task</button></div>
+    </div>
+  </div>
+}
+
+function DeleteAllCompletedModal({ count, onClose, onConfirm }: { count: number; onClose: () => void; onConfirm: () => void }) {
+  return <div className="modal-backdrop delete-confirm-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
+    <div className="delete-confirm-modal" role="alertdialog" aria-labelledby="delete-completed-title">
+      <div className="delete-confirm-icon"><Trash2 /></div>
+      <h2 id="delete-completed-title">Delete all completed tasks?</h2>
+      <p>This will permanently remove {count} completed {count === 1 ? 'task' : 'tasks'}.</p>
+      <div><button onClick={onClose}>Cancel</button><button className="confirm-delete" autoFocus onClick={onConfirm}>Delete all</button></div>
     </div>
   </div>
 }
@@ -742,11 +1051,36 @@ function FocusScreen({ task, autoExtend, addingSubtask, onExit, onEdit, onComple
   </div>
 }
 
-function TaskRow({ task, group, onEdit, onComplete, draggable = false, active = false }: { task: Task; group?: Group; onEdit: () => void; onComplete: () => void; draggable?: boolean; active?: boolean }) {
-  return <div data-task-id={task.id} className={`task-row ${task.completed ? 'done' : ''} ${active ? 'keyboard-active' : ''}`} draggable={draggable} onDragStart={(e) => e.dataTransfer.setData('taskId', task.id)} onClick={onEdit}>
-    <button className="check-button" onClick={(e) => { e.stopPropagation(); onComplete() }}>{task.completed ? <Check /> : <Circle />}</button>
-    <div className="task-copy"><strong>{task.title}</strong><span>{group && <><i style={{ background: group.color }} />{group.title}</>}{task.date && ` · ${format(parseISO(task.date), 'MMM d')}`}{task.date && ` · ${minutesToTime(task.startMinutes)}`}</span></div>
-    <span className="duration">{task.repeat !== 'none' && <Repeat2 size={12} />}{task.duration}m</span>
+function TaskRow({
+  task, group, onEdit, onComplete, draggable = false, active = false,
+  showScheduleBadge = false, selectionMode = false, selected = false, onToggleSelect,
+}: {
+  task: Task; group?: Group; onEdit: () => void; onComplete: () => void; draggable?: boolean; active?: boolean
+  showScheduleBadge?: boolean; selectionMode?: boolean; selected?: boolean; onToggleSelect?: () => void
+}) {
+  return <div
+    data-task-id={task.id}
+    className={`task-row ${task.completed ? 'done' : ''} ${active ? 'keyboard-active' : ''} ${selectionMode ? 'selectable' : ''} ${selected ? 'selected' : ''}`}
+    draggable={draggable && !selectionMode}
+    onDragStart={(e) => e.dataTransfer.setData('taskId', task.id)}
+    onClick={() => selectionMode ? onToggleSelect?.() : onEdit()}
+  >
+    <button className="check-button" onClick={(e) => { e.stopPropagation(); onComplete() }} aria-label={task.completed ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}>{task.completed ? <Check /> : <Circle />}</button>
+    <div className="task-copy">
+      <strong>{task.title}</strong>
+      <span className="task-meta">
+        {showScheduleBadge && <em className={`schedule-badge ${task.date ? 'scheduled' : 'unscheduled'}`}>
+          {task.date ? `${format(parseISO(task.date), 'EEE MMM d')} · ${minutesToTime(task.startMinutes)}` : 'Unscheduled'}
+        </em>}
+        {group && <span className="task-group"><i style={{ background: group.color }} />{group.title}</span>}
+        {!showScheduleBadge && <>
+          {group && <><i style={{ background: group.color }} />{group.title}</>}
+          {task.date && ` · ${format(parseISO(task.date), 'MMM d')}`}
+          {task.date && ` · ${minutesToTime(task.startMinutes)}`}
+        </>}
+      </span>
+    </div>
+    <span className="duration">{(task.repeat !== 'none' || task.seriesRepeat || task.seriesId) && <Repeat2 size={12} />}{task.duration}m</span>
   </div>
 }
 
@@ -760,27 +1094,62 @@ function CalendarToolbar({ anchor, range, setRange, move, reset }: { anchor: Dat
   </div>
 }
 
+// Re-reading the clock also picks up OS timezone changes, since Date reflects the current zone.
+function useCurrentTime(intervalMs = 30000) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const sync = () => setNow(new Date())
+    const timer = window.setInterval(sync, intervalMs)
+    window.addEventListener('focus', sync)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', sync)
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [intervalMs])
+  return now
+}
+
 function TimeCalendar({ days, tasks, groupMap, onTask, onEmpty, onDrop, updateTask, completeTask, zoom, activeTaskId }: {
   days: Date[]; tasks: Task[]; groupMap: Map<string, Group>; onTask: (task: Task) => void
   onEmpty: (day: Date, startMinutes: number) => void; onDrop: (id: string, day: Date, y: number, rect: DOMRect) => void
   updateTask: (task: Task) => void; completeTask: (id: string, complete?: boolean) => void; zoom: number; activeTaskId: string | null
 }) {
-  const startHour = 7
-  const hours = Array.from({ length: 14 }, (_, i) => i + startHour)
-  return <div className="time-calendar">
-    <div className="day-headers" style={{ gridTemplateColumns: `52px repeat(${days.length}, minmax(90px, 1fr))` }}><div />{days.map((day) => <div className={isToday(day) ? 'today' : ''} key={day.toString()}><span>{format(day, 'EEE')}</span><b>{format(day, 'd')}</b></div>)}</div>
-    <div className="time-grid" style={{ minHeight: `${780 * zoom}px` }}>
-      <div className="hours">{hours.map((hour) => <span key={hour}>{format(new Date(2020, 1, 1, hour), 'h a')}</span>)}</div>
-      {days.map((day) => <div className="day-column" data-date={dateToKey(day)} key={day.toString()} onDoubleClick={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect()
-        onEmpty(day, Math.round((420 + ((e.clientY - rect.top) / rect.height) * 780) / 15) * 15)
-      }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDrop(e.dataTransfer.getData('taskId'), day, e.clientY, e.currentTarget.getBoundingClientRect())}>
-        {hours.map((hour) => <i className="hour-line" style={{ top: `${((hour - startHour) / 13) * 100}%` }} key={hour} />)}
-        {tasks.filter((t) => t.date === dateToKey(day)).map((task) => {
-          const group = task.groupId ? groupMap.get(task.groupId) : undefined
-          return <CalendarTask task={task} color={group?.color || '#6f7785'} active={activeTaskId === task.id} onTask={onTask} updateTask={updateTask} completeTask={completeTask} key={task.id} />
-        })}
-      </div>)}
+  const hours = Array.from({ length: 24 }, (_, i) => i)
+  const now = useCurrentTime()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const nowOffset = minutesToOffset(nowMinutes)
+  const today = dateToKey(now)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const container = scrollRef.current
+    const grid = container?.querySelector('.time-grid') as HTMLElement | null
+    if (!container || !grid) return
+    const minutes = new Date().getHours() * 60 + new Date().getMinutes()
+    container.scrollTop = Math.max(0, (minutes / DAY_MINUTES) * grid.offsetHeight - container.clientHeight / 3)
+  }, [])
+  return <div className="time-calendar" ref={scrollRef}>
+    <div className="day-headers" style={{ gridTemplateColumns: `52px repeat(${days.length}, minmax(90px, 1fr))` }}><div />{days.map((day) => <div className={`${isToday(day) ? 'today' : ''} ${dateToKey(day) < today ? 'past' : ''}`} key={day.toString()}><span>{format(day, 'EEE')}</span><b>{format(day, 'd')}</b></div>)}</div>
+    <div className="time-grid" style={{ minHeight: `${GRID_HEIGHT * zoom}px` }}>
+      <div className="hours">
+        {hours.map((hour) => <span style={{ top: `${minutesToOffset(hour * 60)}%` }} key={hour}>{format(new Date(2020, 1, 1, hour), 'h a')}</span>)}
+        <b className="now-label" style={{ top: `${nowOffset}%` }}>{format(now, 'h:mm')}</b>
+      </div>
+      {days.map((day) => {
+        const dayKey = dateToKey(day)
+        return <div className={`day-column ${dayKey === today ? 'today' : ''} ${dayKey < today ? 'past' : ''}`} data-date={dayKey} key={day.toString()} onDoubleClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect()
+          onEmpty(day, offsetToMinutes((e.clientY - rect.top) / rect.height))
+        }} onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDrop(e.dataTransfer.getData('taskId'), day, e.clientY, e.currentTarget.getBoundingClientRect())}>
+          {hours.map((hour) => <i className="hour-line" style={{ top: `${minutesToOffset(hour * 60)}%` }} key={hour} />)}
+          {dayKey === today && <i className="now-line" data-testid="now-line" style={{ top: `${nowOffset}%` }} />}
+          {tasks.filter((t) => t.date === dayKey).map((task) => {
+            const group = task.groupId ? groupMap.get(task.groupId) : undefined
+            return <CalendarTask task={task} color={group?.color || '#6f7785'} active={activeTaskId === task.id} onTask={onTask} updateTask={updateTask} completeTask={completeTask} key={task.id} />
+          })}
+        </div>
+      })}
     </div>
   </div>
 }
@@ -792,9 +1161,9 @@ function CalendarTask({ task, color, active, onTask, updateTask, completeTask }:
   const drag = useRef<{ x: number; y: number; moved: boolean; rect: DOMRect } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [dragPreview, setDragPreview] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
-  const top = ((task.startMinutes - 420) / 780) * 100
-  const minimumHeight = task.duration <= 15 ? 2.5 : task.duration <= 30 ? 3.85 : 4.6
-  const height = Math.max(minimumHeight, (task.duration / 780) * 100)
+  const top = minutesToOffset(task.startMinutes)
+  const minimumMinutes = task.duration <= 15 ? 20 : task.duration <= 30 ? 30 : 36
+  const height = minutesToOffset(Math.max(task.duration, minimumMinutes))
 
   return <div
     className={`calendar-task ${task.completed ? 'completed-task' : ''} ${task.duration <= 30 ? 'compact-task' : ''} ${task.duration <= 15 ? 'tiny-task' : ''} ${isDragging ? 'dragging' : ''} ${active ? 'keyboard-active' : ''}`}
@@ -836,8 +1205,8 @@ function CalendarTask({ task, color, active, onTask, updateTask, completeTask }:
           const targetColumn = dropTarget?.closest('.day-column') as HTMLElement | null
           if (targetColumn) {
             const rect = targetColumn.getBoundingClientRect()
-            const rawMinutes = 420 + ((e.clientY - rect.top) / rect.height) * 780
-            const startMinutes = Math.max(420, Math.min(1200 - task.duration, Math.round(rawMinutes / 15) * 15))
+            const rawMinutes = offsetToMinutes((e.clientY - rect.top) / rect.height)
+            const startMinutes = Math.max(0, Math.min(DAY_MINUTES - task.duration, rawMinutes))
             updateTask({ ...task, date: targetColumn.dataset.date || task.date, startMinutes })
           }
         }
@@ -868,7 +1237,7 @@ function ResizeHandle({ task, updateTask }: { task: Task; updateTask: (task: Tas
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
     const column = e.currentTarget.closest('.day-column') as HTMLElement | null
-    start.current = { y: e.clientY, duration: task.duration, pixelsPerMinute: (column?.getBoundingClientRect().height || 780) / 780 }
+    start.current = { y: e.clientY, duration: task.duration, pixelsPerMinute: (column?.getBoundingClientRect().height || GRID_HEIGHT) / DAY_MINUTES }
   }} onPointerMove={(e) => {
     if (!start.current) return
     const delta = Math.round(((e.clientY - start.current.y) / start.current.pixelsPerMinute) / 15) * 15

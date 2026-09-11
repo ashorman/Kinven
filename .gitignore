@@ -7,15 +7,28 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies and build output
 node_modules
 dist
 dist-ssr
 *.local
 
-# Env and secrets
+# Env and secrets — never commit these
 .env
 .env.*
 !.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+id_rsa
+id_ed25519
+gitkey
+gitkey.pub
+credentials.json
+secrets.json
+*.secret
 
 # Coverage
 coverage
@@ -32,6 +45,7 @@ coverage
 *.sln
 *.sw?
 
-# Local launchers
+# Local notes and launchers
 *.rtf
-
+.cache
+.turbo

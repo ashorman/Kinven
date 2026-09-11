@@ -25,6 +25,12 @@ Vite prints a local address, usually `http://127.0.0.1:5173`. Open that in a bro
 
 Kinven stores app data under `kinven-local-v1` and theme preference under `kinven-theme`. Older local builds migrate automatically from `aftertone-local-v1` and `aftertone-theme`.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability. GitHub Actions runs tests, lint, `npm audit`, CodeQL, and a secrets scan on `main`.
+
+For first-time GitHub publishing steps and repository protection settings, see [docs/GITHUB_SECURITY.md](docs/GITHUB_SECURITY.md).
+
 ## Change log
 
 See `CHANGELOG.md` for numbered, reversible local changes.
