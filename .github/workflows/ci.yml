@@ -22,8 +22,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
+      - run: node --version
       - run: npm ci
       - run: npm run lint
       - run: npm test
