@@ -171,6 +171,20 @@ describe('hovered task shortcut regressions', () => {
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Delete “Reply to messages”?')
     expect(screen.getByText('Reply to messages')).toBeInTheDocument()
   })
+
+  it('duplicates a calendar task with D', () => {
+    render(<KinvenApp />)
+    const calendarTask = screen.getAllByText('Plan the day')
+      .map((node) => node.closest<HTMLElement>('.calendar-task'))
+      .find(Boolean)
+
+    expect(calendarTask).toBeTruthy()
+    fireEvent.mouseOver(calendarTask as HTMLElement)
+    fireEvent.keyDown(window, { key: 'd' })
+
+    expect(screen.getByText('Plan the day copy')).toBeInTheDocument()
+    expect(screen.getByText('Task duplicated')).toBeInTheDocument()
+  })
 })
 
 describe('task creation regressions', () => {
@@ -261,6 +275,15 @@ describe('task list regressions', () => {
     expect(within(planningPane).getByText('Reply to messages')).toBeInTheDocument()
     expect(within(planningPane).queryByText('Plan the day')).not.toBeInTheDocument()
     expect(screen.getByText('Unscheduled tasks only. Drag onto the calendar to schedule.')).toBeInTheDocument()
+  })
+
+  it('shows each task group only once in compact planning rows', () => {
+    render(<KinvenApp />)
+    const planningPane = document.querySelector<HTMLElement>('.planning-pane')!
+    const row = within(planningPane).getByText('Reply to messages').closest('[data-task-id]')
+
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getAllByText('Admin')).toHaveLength(1)
   })
 })
 

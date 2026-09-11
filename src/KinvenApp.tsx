@@ -133,7 +133,7 @@ function readStoredTheme() {
 }
 const SHORTCUT_GROUPS = [
   { title: 'Global', items: [['Double ⌘', 'Universal Capture'], ['⌘ I', 'Auto Capture'], ['⌘ K', 'Command palette'], ['Tab', 'Calendar / Focus Mode'], ['⌘ Z', 'Undo'], ['⌘ P', 'Auto Plan'], ['⌘ ⇧ P', 'Auto Schedule']] },
-  { title: 'Tasks & calendar', items: [['N', 'New task'], ['⌘ N', 'Schedule new task'], ['P', 'Plan selected task'], ['S', 'Schedule selected task'], ['E', 'Edit selected task'], ['/', 'Actions'], ['⌫', 'Delete'], ['J / K', 'Next / previous task'], ['⌘ ↑ / ↓', 'Reorder task'], ['⌘ D', 'Set date'], ['1 / 2 / 3 / 4', 'Inbox / Today / Upcoming / Completed'], ['5', 'Planning view'], ['R', 'Incomplete'], ['⌘ F', 'Filter'], ['O / G', 'Groups'], ['⌘ 1 / 3 / 7 / 0', 'Calendar range'], ['⌘ C / V', 'Copy / paste task'], ['⌘ + / −', 'Calendar zoom']] },
+  { title: 'Tasks & calendar', items: [['N', 'New task'], ['⌘ N', 'Schedule new task'], ['D', 'Duplicate selected task'], ['P', 'Plan selected task'], ['S', 'Schedule selected task'], ['E', 'Edit selected task'], ['/', 'Actions'], ['⌫', 'Delete'], ['J / K', 'Next / previous task'], ['⌘ ↑ / ↓', 'Reorder task'], ['⌘ D', 'Set date'], ['1 / 2 / 3 / 4', 'Inbox / Today / Upcoming / Completed'], ['5', 'Planning view'], ['R', 'Incomplete'], ['⌘ F', 'Filter'], ['O / G', 'Groups'], ['⌘ 1 / 3 / 7 / 0', 'Calendar range'], ['⌘ C / V', 'Copy / paste task'], ['⌘ + / −', 'Calendar zoom']] },
   { title: 'Smart Zoning', items: [['⇧ →', 'Place selected task'], ['↑ / ↓', 'Move time'], ['← / →', 'Move day'], ['⌘ ↑ / ↓', 'Shorten / extend'], ['Enter', 'Confirm'], ['Esc', 'Cancel']] },
   { title: 'Focus Mode', items: [['E', 'Complete'], ['⌘ E', 'Complete now'], ['⌘ S', 'Add subtask'], ['A', 'Auto-Extend'], ['B', 'Take a break'], ['+ / −', 'Extend / shorten'], ['/', 'Actions'], ['Enter', 'Edit'], ['⌘ J', 'Open notes'], ['⌫', 'Delete']] },
 ] as const
@@ -458,6 +458,22 @@ export default function KinvenApp() {
   }
   const openScheduledTask = (date: Date, startMinutes = 540) =>
     setCreatingTask({ date: dateToKey(date), startMinutes, duration: 30 })
+  const duplicateTask = useCallback((task: Task) => {
+    const copy: Task = {
+      ...task,
+      id: uid(),
+      title: `${task.title} copy`,
+      completed: false,
+      createdAt: Date.now(),
+      subtasks: task.subtasks?.map((subtask) => ({ ...subtask, id: uid() })),
+      seriesId: undefined,
+      seriesRepeat: undefined,
+      repeat: 'none',
+    }
+    setTasks((items) => [...items, copy])
+    setActiveTaskId(copy.id)
+    setToast('Task duplicated')
+  }, [])
   const scheduleDroppedTask = (taskId: string, day: Date, clientY: number, rect: DOMRect) => {
     const raw = offsetToMinutes((clientY - rect.top) / rect.height)
     const snapped = Math.max(0, Math.min(DAY_MINUTES - 15, raw))
@@ -548,6 +564,11 @@ export default function KinvenApp() {
         if (!mod && key === 'r') {
           event.preventDefault()
           completeTask(hoveredTask.id, false)
+          return
+        }
+        if (!mod && key === 'd') {
+          event.preventDefault()
+          duplicateTask(hoveredTask)
           return
         }
         if (event.key === 'Enter') {
@@ -649,7 +670,7 @@ export default function KinvenApp() {
       if (mod && key === 'c' && current) { event.preventDefault(); copiedTask.current = current; setToast('Task copied'); return }
       if (mod && key === 'v' && copiedTask.current) {
         event.preventDefault()
-        setTasks((items) => [...items, { ...copiedTask.current!, id: uid(), title: `${copiedTask.current!.title} copy`, completed: false, createdAt: Date.now() }])
+        duplicateTask(copiedTask.current)
         setToast('Task pasted')
         return
       }
@@ -658,6 +679,7 @@ export default function KinvenApp() {
       if (mod && key === 'd' && current) { event.preventDefault(); setEditingTask(current); return }
 
       if (key === 'n') { event.preventDefault(); setCreatingTask({}); return }
+      if (key === 'd' && current) { event.preventDefault(); duplicateTask(current); return }
       if (key === '1') { setView('inbox'); return }
       if (key === '2') { setView('today'); return }
       if (key === '3') { setView('upcoming'); return }
@@ -708,7 +730,7 @@ export default function KinvenApp() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeTaskId, autoExtend, commandPalette, creatingTask, deletingAllCompleted, deletingTask, editingGroup, editingTask, focusMode, focusTask, groups, hoveredTask, inboxTasks, now, removeTask, shortcutHelp, tasks, view, visibleTasks])
+  }, [activeTaskId, autoExtend, commandPalette, creatingTask, deletingAllCompleted, deletingTask, duplicateTask, editingGroup, editingTask, focusMode, focusTask, groups, hoveredTask, inboxTasks, now, removeTask, shortcutHelp, tasks, view, visibleTasks])
 
   const runCommand = (id: string) => {
     setCommandPalette(false)
@@ -1125,7 +1147,6 @@ function TaskRow({
         </em>}
         {group && <span className="task-group"><i style={{ background: group.color }} />{group.title}</span>}
         {!showScheduleBadge && <>
-          {group && <><i style={{ background: group.color }} />{group.title}</>}
           {task.date && ` · ${format(parseISO(task.date), 'MMM d')}`}
           {task.date && ` · ${minutesToTime(task.startMinutes)}`}
         </>}
