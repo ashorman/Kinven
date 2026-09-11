@@ -1,6 +1,12 @@
 # Kinven
 
-A vibe-coded, local-first task and calendar app. Tasks, groups, and calendar blocks live in your browser via `localStorage`. This GitHub repo is the source code only - there is no hosted Kinven website.
+Kinven is a local-first task and calendar planner for turning loose tasks into an actual week. It focuses on the moment where a to-do list stops being useful: deciding what belongs in the inbox, what deserves calendar time, and what can move when the day changes.
+
+![Kinven calendar planning screenshot](docs/kinven-screenshot.png)
+
+I wanted to make planning feel closer to arranging time than managing a database, so the calendar view keeps an unscheduled planning pane next to the week grid. After using it, I changed the sidebar filters so Inbox, Today, Upcoming, Completed, and groups retarget that planning pane while the calendar stays open, which made drag-to-schedule planning much faster.
+
+Tasks, groups, and calendar blocks live in your browser via `localStorage`. This GitHub repo is the source code only - there is no hosted Kinven website.
 
 **Setup:** see [SETUP.md](SETUP.md).
 
