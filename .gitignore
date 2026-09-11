@@ -7,13 +7,23 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Diagnostics and runtime data
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+pids
+*.pid
+*.seed
+*.pid.lock
+
 # Dependencies and build output
 node_modules
+node_modules/
 dist
 dist-ssr
+out
+build/Release
 *.local
 
-# Env and secrets — never commit these
+# Env and secrets - never commit these
 .env
 .env.*
 !.env.example
@@ -30,13 +40,24 @@ credentials.json
 secrets.json
 *.secret
 
-# Coverage
+# Coverage and caches
 coverage
 *.lcov
+.nyc_output
+.cache
+.turbo
+.npm
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+.vite/
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+.vscode-test
 .idea
 .DS_Store
 *.suo
@@ -45,7 +66,8 @@ coverage
 *.sln
 *.sw?
 
+# Package artifacts
+*.tgz
+
 # Local notes and launchers
 *.rtf
-.cache
-.turbo
